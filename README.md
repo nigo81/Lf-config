@@ -24,8 +24,10 @@ pip3 install ueberzug
 
 配置中还需要安装的软件有：
 
-1. fzf
-2. trash-cli
+1. fzf  # 模糊搜索工具
+2. trash-cli # 删除到回收站
+3. dragon-drop # 文件拖动
+4. sxiv # 图片查看器
 
 如果你需要按`q`退出后，能切换工作目录，需要在`.bashrc`中添加代码：
 
