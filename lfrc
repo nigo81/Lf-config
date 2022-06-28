@@ -1,0 +1,350 @@
+# Luke's lf settings
+
+
+# Note on Image Previews
+# For those wanting image previews, like this system, there are four steps to
+# set it up. These are done automatically for LARBS users, but I will state
+# them here for others doing it manually.
+#
+# 1. ueberzug must be installed.
+# 2. The scope file (~/.config/lf/scope for me), must have a command similar to
+#    mine to generate ueberzug images.
+# 3. A `set cleaner` line as below is a cleaner script.
+# 4. lf should be started through a wrapper script (~/.local/bin/lfub for me)
+#    that creates the environment for ueberzug. This command can be be aliased
+#    in your shellrc (`alias lf="lfub") or if set to a binding, should be
+#    called directly instead of normal lf.
+
+# Basic vars
+set shellopts '-eu'
+set ifs "\n"
+set scrolloff 10
+set icons
+set period 1
+set hiddenfiles ".*:*.aux:*.log:*.bbl:*.bcf:*.blg:*.run.xml"
+set cleaner '~/.config/lf/cleaner'
+set previewer '~/.config/lf/scope'
+
+# cmds/functions
+# open commander default 'l' and '<right>'
+cmd open ${{
+    test -L $f && f=$(readlink -f $f)
+    case $(file --mime-type $f -b) in
+        text/*) $EDITOR $fx;;
+        application/json) $EDITOR $fx;;
+        *) for f in $fx; do xdg-open $f > /dev/null 2> /dev/null & done;;
+    esac
+}}
+# open with custom application
+cmd openwith %"$@" "$fx"
+# create direactory
+cmd mkdir $mkdir -p "$(echo $* | tr ' ' '\ ')"
+
+# extrat compress files
+cmd extract ${{
+    set -f
+    archive="${fx%.*}"
+    mkdir "$archive"
+    cd "$archive"
+    case $f in
+        *.tar.bz|*.tar.bz2|*.tbz|*.tbz2) tar xjvf $f;;
+        *.tar.gz|*.tgz) tar xzvf $f;;
+        *.tar.xz|*.txz) tar xJvf $f;;
+        *.zip) unzip -O gbk $f;;
+        *.rar) unrar x $f;;
+        *.7z) 7z x $f;;
+    esac
+}}
+# compress current file or selected files with zip
+cmd zip ${{
+    set -f
+    mkdir $1
+    cp -r $fx $1
+    zip -r $1.zip $1
+    rm -rf $1
+}}
+
+# delete files
+cmd delete ${{
+	clear; tput cup $(($(tput lines)/3)); tput bold
+	set -f
+	printf "%s\n\t" "$fx"
+	printf "delete?[y/N]"
+	read ans
+	[ $ans = "y" ] && rm -rf -- $fx
+}}
+
+
+# sxiv display image
+cmd img ${{
+    sxiv *.png *.jpg *.svg *.jpeg 2>/dev/null
+}}
+
+
+cmd setbg "$1"
+# change multi files name
+cmd bulk-rename ${{
+    old="$(mktemp)"
+    new="$(mktemp)"
+    if [ -n "$fs" ]; then
+        fs="$(basename -a $fs)"
+    else
+        fs="$(ls)"
+    fi
+    printf '%s\n' "$fs" >"$old"
+    printf '%s\n' "$fs" >"$new"
+    $EDITOR "$new"
+    [ "$(wc -l < "$new")" -ne "$(wc -l < "$old")" ] && exit
+    paste "$old" "$new" | while IFS= read -r names; do
+        src="$(printf '%s' "$names" | cut -f1)"
+        dst="$(printf '%s' "$names" | cut -f2)"
+        if [ "$src" = "$dst" ] || [ -e "$dst" ]; then
+            continue
+        fi
+        mv -- "$src" "$dst"
+    done
+    rm -- "$old" "$new"
+    lf -remote "send $id unselect"
+}}
+
+# zoxide is a smarter cd command that helps you jump to any directory in just a few keystrokes
+cmd z %{{
+    result="$(zoxide query --exclude "${PWD}" -- "$1")"
+    lf -remote "send ${id} cd '${result}'"
+}}
+
+cmd zi ${{
+    result="$(zoxide query -i -- "$1")"
+    lf -remote "send ${id} cd '${result}'"
+}}
+
+#Combining fzf with ripgrep, you can interactively search in the contents of files under the current directory and select a file from the results:
+cmd fzf_search ${{
+    res="$( \
+        RG_PREFIX="rg --column --line-number --no-heading --color=always \
+            --smart-case "
+        FZF_DEFAULT_COMMAND="$RG_PREFIX ''" \
+            fzf --bind "change:reload:$RG_PREFIX {q} || true" \
+            --ansi --layout=reverse --header 'Search in files' \
+            | cut -d':' -f1
+    )"
+    [ ! -z "$res" ] && lf -remote "send $id select \"$res\""
+}}
+
+# charge U disk
+cmd diskmount ${{
+# Get the target volume
+target_vol=$(lsblk | fzf --reverse | sed 's/^[^[:alnum:]]*//' | cut -d' ' -f1)
+# Is it encrypted or something?
+if [[ $(lsblk -o NAME,FSTYPE | sed 's/^[^[:alnum:]]*//' | grep "$target_vol" | awk '{print $2}') == "crypto_LUKS" ]]; then
+	echo "Volume is encrypted"
+	udisksctl unlock -b /dev/"$target_vol"
+	list_mount
+	exit 0
+fi
+# Is it internal?
+if [[ $(lsblk -o NAME,RM | sed 's/^[^[:alnum:]]*//' | grep "$target_vol " | awk '{print $2}') -eq 1 ]]; then
+	removable=true
+else
+	removable=false
+fi
+# Adjust to proper device path
+if [[ -e /dev/"$target_vol" ]]; then
+	target_vol="/dev/$target_vol"
+elif [[ -e /dev/mapper/"$target_vol" ]]; then
+	target_vol="/dev/mapper/$target_vol"
+else
+	echo "Something vent wrong, no such volume?"
+fi
+if $removable; then
+	udisksctl mount -b "$target_vol"
+	echo "Press Return to continue"
+	read 
+else
+	echo "Input mountpoint:"
+
+	read mountpoint
+	
+	while ! [[ -d "$mountpoint" ]]; do
+		sudo mkdir -p "$mountpoint" ||\
+		echo "$mountpoint is not a possible mountpoint.
+Input new mountpoint:" && read mountpoint
+	done
+	sudo mount "$target_vol" "$mountpoint" && \
+	echo "Mounted $target_vol to $mountpoint
+Press Return to continue"
+read
+fi
+}}
+
+# dragon cmd
+cmd dragon %dragon-drag-and-drop -a -x $fx
+cmd dragon-stay %dragon-drag-and-drop -a $fx
+cmd dragon-individual %dragon-drag-and-drop $fx
+cmd cpdragon ${{
+files=$(dragon-drag-and-drop -t -x)
+
+for file in $files
+do
+  path=${file#file://}
+  name=$(basename "$path")
+  cp "$path" "$(pwd)/$name"
+done
+}}
+
+cmd mvdragon ${{
+files=$(dragon-drag-and-drop -t -x)
+
+for file in $files
+do
+  path=${file#file://}
+  name=$(basename "$path")
+  mv "$path" "$(pwd)/$name"
+done
+}}
+# download file 
+cmd dlfile ${{
+url=$(dragon-drag-and-drop -t -x)
+
+if [ -n "$url" ]; then
+  printf "File Name: "
+  name=""
+  while [ -z $name ] || [ -e $name ]
+  do
+    read -r name
+    if [ -e "$name" ]; then
+      printf "File already exists, overwrite (y|n): "
+      read -r ans
+
+      if [ "$ans" = "y" ]; then
+        break
+      else
+        printf "File Name: "
+      fi
+    fi
+  done
+
+  # Download the file with curl
+  [ -n "$name" ] && curl -o "$name" "$url" || exit 1
+else
+  exit 1
+fi
+}}
+
+# Trash cli bindings
+cmd trash ${{
+  files=$(printf "$fx" | tr '\n' ';')
+  while [ "$files" ]; do
+    # extract the substring from start of string up to delimiter.
+    # this is the first "element" of the string.
+    file=${files%%;*}
+
+    trash-put "$(basename "$file")"
+    # if there's only one element left, set `files` to an empty string.
+    # this causes us to exit this `while` loop.
+    # else, we delete the first "element" of the string from files, and move onto the next.
+    if [ "$files" = "$file" ]; then
+      files=''
+    else
+      files="${files#*;}"
+    fi
+  done
+}}
+
+cmd clear_trash %trash-empty
+
+cmd restore_trash ${{
+  trash-restore
+}}
+
+# yank filename without extension
+cmd yank-basename-without-extension ${{
+    echo "$fx" |
+      xargs -r -d '\n' basename -a |
+      awk -e '{
+        for (i=length($0); i > 0; i--) {
+          if (substr($0, i, 1) == ".") {
+            if (i == 1) print $0
+            else print substr($0, 0, i-1)
+
+            break
+          }
+        }
+
+        if (i == 0)
+          print $0
+      }' |
+      if [ -n "$fs" ]; then cat; else tr -d '\n'; fi |
+      xclip -i -selection clipboard
+}}
+
+#########################################################################################
+
+# Bindings
+# Remove some defaults
+map d
+map f
+map F
+map t
+map y
+map r
+map dd cut
+map <c-f> $lf -remote "send $id select \"$(fzf)\""
+# custom f to fzf search directory
+map f $lf -remote "send $id select \"$(find -type d 2>/dev/null | fzf)\""
+map J $lf -remote "send $id cd $(sed -e 's/\s*#.*//' -e '/^$/d' -e 's/^\S*\s*//' ${XDG_CONFIG_HOME:-$HOME/.config}/shell/bm-dirs | fzf)"
+map . set hidden!
+map C push :zip<space>
+map D trash
+map x delete
+map X extract
+map M push :mkdir<space>
+map U :diskmount
+map R reload
+map <c-j> push 10j
+map <c-k> push 10k
+map <c-p> img
+map <c-o> jump-prev # default is [
+map <c-r> jump-next # default is ]
+map <c-s> :fzf_search
+map <c-g> push $lazygit<enter>
+map <enter> shell
+map o push :openwith<space>
+#map o &mimeopen $f
+#map O $mimeopen --ask $f
+map A rename # at the very end
+map I push A<c-a> # at the very beginning
+map i push A<a-b><a-b><a-f> # before extension
+map a push A<a-b> # after extension
+map r bulk-rename
+map b $setbg $f
+map <c-e> down
+map <c-y> up
+map V push :!nvim<space>
+# show 1 pannel or 2 pannel
+map w %lf -remote "send $id set ratios 1:2"
+map W %lf -remote "send $id set ratios 1:2:3"
+
+# map copy file or file name
+map yy copy
+map yd $dirname -- "$f" | head -c-1 | xclip -i -selection clipboard
+map yp $printf "%s" "$fx" | xclip -selection clipboard
+map yn $basename -a -- $fx | head -c-1 | xclip -i -selection clipboard
+map ye yank-basename-without-extension 
+# jump to file
+map zz push :z<space>
+
+# Dragon mapping
+map dr dragon
+map ds dragon-stay
+map di dragon-individual
+map dm mvdragon
+map dc cpdragon
+map dl dlfile
+# Trash Mappings
+# map dd trash
+map tc clear_trash
+map tr restore_trash
+
+# Source Bookmarks
+source "~/.config/lf/shortcutrc"
